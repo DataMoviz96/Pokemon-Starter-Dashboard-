@@ -1,0 +1,556 @@
+import dash
+import dash_bootstrap_components as dbc
+from dash import dcc, html
+import pandas as pd
+import plotly.graph_objects as go
+from dash.dependencies import Input, Output, State, MATCH
+import dash_audio_components as dac
+from gtts import gTTS
+import base64
+from io import BytesIO
+import time
+
+# Sample data
+data = {
+    'Starter': ['Bulbasaur', 'Charmander', 'Squirtle'],
+    'Player_Choice_Percentage': [20, 50, 30],
+    'Average_End_Level': [55, 60, 58],
+    'Popularity_Mentions': [1800, 2400, 2100],
+    'Merchandise_Sales': [10000, 15000, 13000],
+    'Win_Rate': [65, 70, 68],
+    'Average_Time_To_Beat_Elite_Four': [30, 25, 28],
+    'Most_Used_Move': ['Vine Whip', 'Flamethrower', 'Water Gun'],
+    'Most_Used_Move_Count': [100, 150, 120],
+    'Evolution_Level': [16, 16, 16],
+    'Average_Battle_Duration': [5, 6, 5.5]
+}
+
+df = pd.DataFrame(data)
+
+# Pokémon type colors
+TYPE_COLORS = {
+    'Bulbasaur': '#78C850',
+    'Charmander': '#F08030',
+    'Squirtle': '#6890F0'
+}
+
+# Custom Plotly theme
+CUSTOM_TEMPLATE = go.layout.Template(
+    layout=go.Layout(
+        font=dict(family="Arial, sans-serif", size=12, color="white"),
+        paper_bgcolor='rgba(34, 34, 34, 1)',  # Dark grey background
+        plot_bgcolor='rgba(34, 34, 34, 1)',
+        title=dict(font=dict(family="Arial, sans-serif", size=20, color="white")),
+        xaxis=dict(
+            showgrid=True,
+            zeroline=False,
+            showline=True,
+            showticklabels=True,
+            tickfont=dict(family="Arial, sans-serif", size=12, color="white")
+        ),
+        yaxis=dict(
+            showgrid=True,
+            gridcolor='grey',
+            zeroline=False,
+            showline=True,
+            showticklabels=True,
+            tickfont=dict(family="Arial, sans-serif", size=12, color="white")
+        ),
+        hovermode='closest',
+        transition=dict(duration=500)
+    )
+)
+
+# Initialize the Dash app
+app = dash.Dash(__name__, suppress_callback_exceptions=True, external_stylesheets=[dbc.themes.BOOTSTRAP])
+app.title = "Pokémon Starter Stats"
+
+# Add inline CSS for the spinner
+app.index_string = '''
+<!DOCTYPE html>
+<html>
+    <head>
+        {%metas%}
+        <title>{%title%}</title>
+        {%favicon%}
+        {%css%}
+        <style>
+            /* Center the spinner */
+            ._dash-loading-callback {
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                background-color: black !important;
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                z-index: 9999;
+            }
+            /* Style the spinner */
+            .dash-spinner {
+                border-top-color: red !important;
+                border-width: 4px !important;
+                width: 50px !important;
+                height: 50px !important;
+            }
+            /* Hide the loading text */
+            .dash-loading {
+                display: none;
+            }
+        </style>
+    </head>
+    <body>
+        {%app_entry%}
+        <footer>
+            {%config%}
+            {%scripts%}
+            {%renderer%}
+        </footer>
+    </body>
+</html>
+'''
+
+# Loading overlay
+loading_overlay = dcc.Loading(
+    id="loading-overlay",
+    type="circle",
+    fullscreen=True,
+    children=html.Div(id="loading-output"),
+)
+
+# Create individual graph components
+def create_bar_graph(x, y, title):
+    fig = go.Figure(
+        data=[go.Bar(x=x, y=y, marker=dict(color=[TYPE_COLORS[val] for val in x]))]
+    )
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=20), x=0.5),
+        template=CUSTOM_TEMPLATE, 
+        height=300,
+        hoverlabel=dict(font_size=14),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    return fig
+
+def create_pie_chart(labels, values, title):
+    colors = [TYPE_COLORS[label] for label in labels]
+    fig = go.Figure(data=[go.Pie(labels=labels, values=values, hole=.3, marker=dict(colors=colors))])
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=20), x=0.5),
+        template=CUSTOM_TEMPLATE, 
+        height=300,
+        hoverlabel=dict(font_size=14),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    return fig
+
+def create_line_graph(x, y, title):
+    colors = [TYPE_COLORS[val] for val in x]
+    fig = go.Figure(data=[go.Scatter(x=x, y=y, mode='lines+markers', line=dict(color='#FF5733'), marker=dict(size=10, color=colors))])
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=20), x=0.5),
+        template=CUSTOM_TEMPLATE, 
+        height=300,
+        hoverlabel=dict(font_size=14),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    return fig
+
+def create_scatter_graph(x, y, title):
+    fig = go.Figure(data=[go.Scatter(x=x, y=y, mode='markers', marker=dict(size=12, color=[TYPE_COLORS[val] for val in x]))])
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=20), x=0.5),
+        template=CUSTOM_TEMPLATE, 
+        height=300,
+        hoverlabel=dict(font_size=14),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    return fig
+
+def create_bubble_chart(x, y, size, title):
+    fig = go.Figure(data=[go.Scatter(x=x, y=y, mode='markers', marker=dict(size=size, color=[TYPE_COLORS[val] for val in x], sizemode='diameter'))])
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=20), x=0.5),
+        template=CUSTOM_TEMPLATE, 
+        height=300,
+        hoverlabel=dict(font_size=14),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    return fig
+
+def create_sunburst_chart(labels, parents, values, title):
+    fig = go.Figure(go.Sunburst(labels=labels, parents=parents, values=values, marker=dict(colors=[TYPE_COLORS.get(label, '#FFFFFF') for label in labels])))
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=20), x=0.5),
+        template=CUSTOM_TEMPLATE, 
+        height=300,
+        hoverlabel=dict(font_size=14),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    return fig
+
+def create_data_card(title, value):
+    return html.Div([
+        html.H3(title, style={'color': 'white', 'fontSize': '14px'}),  # Reduced font size
+        html.H1(value, style={'color': 'white', 'fontSize': '24px'})  # Reduced font size
+    ], style={
+        'padding': '10px',  # Reduced padding
+        'backgroundColor': '#222',  # Match dashboard background color
+        'borderRadius': '10px', 
+        'boxShadow': '0 0 5px red, 0 0 10px red, 0 0 15px red',  # Reduced neon flash effect
+        'textAlign': 'center', 
+        'margin': '20px',  # Increased margin for spacing
+        'width': '40%',  # Reduced width
+        'display': 'inline-block',
+        'border': '1px solid red'  # Red border
+    })
+
+def create_audio_component(id):
+    return html.Div([
+        html.Audio(
+            id={'type': 'audio-control', 'index': id},
+            controls=True,
+            style={'display': 'block', 'margin': 'auto'}  # Centered
+        )
+    ], style={'textAlign': 'center', 'marginTop': '10px'})
+
+# Modal for displaying graphs
+def create_modal(id):
+    return dbc.Modal(
+        [
+            dbc.ModalHeader(dbc.ModalTitle("Graph Details")),
+            dbc.ModalBody(dcc.Graph(id=f"{id}-modal-graph")),
+            dbc.ModalFooter(
+                dbc.Button("Close", id=f"{id}-close", className="ml-auto", n_clicks=0)
+            ),
+        ],
+        id=f"{id}-modal",
+        is_open=False,
+    )
+
+# Layout components
+main_layout = html.Div([
+    loading_overlay,
+    html.Div([
+        html.Div(style={'height': '50px', 'width': '50px', 'backgroundColor': 'red', 'borderRadius': '50%', 'display': 'inline-block', 'marginRight': '10px', 'verticalAlign': 'middle'}),
+        html.H1('Pokémon Starter Stats Dashboard', style={'color': 'white', 'display': 'inline-block', 'verticalAlign': 'middle'}),
+        html.Div(style={'height': '50px', 'width': '50px', 'backgroundColor': 'red', 'borderRadius': '50%', 'display': 'inline-block', 'marginLeft': '10px', 'verticalAlign': 'middle'}),
+    ], style={'textAlign': 'center', 'border': '1px solid red', 'boxShadow': '2px 2px 8px rgba(0,0,0,0.5)', 'padding': '10px', 'borderRadius': '10px'}),
+    html.Div([
+        dcc.Dropdown(
+            id='page-dropdown',
+            options=[
+                {'label': 'Main Stats', 'value': 'main'},
+                {'label': 'Additional Stats', 'value': 'additional'}
+            ],
+            value='main',
+            style={'width': '50%', 'margin': 'auto', 'border': '1px solid red', 'boxShadow': '2px 2px 8px rgba(0,0,0,0.5)', 'borderRadius': '10px', 'backgroundColor': 'red', 'color': 'black'}
+        )
+    ], style={'padding': '20px', 'textAlign': 'center'}),
+    html.Div(id='page-content'),
+    html.Div([
+        html.P('Created by Mo Uddin', style={'color': 'white', 'textAlign': 'center', 'padding': '20px', 'fontSize': '16px', 'border': '1px solid red', 'borderRadius': '10px', 'boxShadow': '2px 2px 8px rgba(0,0,0,0.5)', 'margin': '10px', 'backgroundColor': '#222'})
+    ])
+], style={
+    'backgroundColor': '#222', 
+    'padding': '20px'
+})
+
+main_stats_layout = html.Div([
+    html.Div([
+        html.Div([
+            dcc.Graph(id='win-rate-graph'),
+            html.P(id='win-rate-analysis', style={'color': 'white', 'fontSize': '14px', 'textAlign': 'center', 'fontWeight': 'bold', 'paddingBottom': '10px'}),
+            create_audio_component('win-rate')
+        ], style={
+            'padding': '10px', 
+            'width': '45%', 
+            'display': 'inline-block', 
+            'verticalAlign': 'top', 
+            'border': '1px solid red', 
+            'borderRadius': '10px',  
+            'boxShadow': '0 0 5px red, 0 0 10px red, 0 0 15px red',  
+            'marginBottom': '20px'
+        }),
+        
+        html.Div([
+            dcc.Graph(id='player-choice-graph'),
+            html.P(id='player-choice-analysis', style={'color': 'white', 'fontSize': '14px', 'textAlign': 'center', 'fontWeight': 'bold', 'paddingBottom': '10px'}),
+            create_audio_component('player-choice')
+        ], style={
+            'padding': '10px', 
+            'width': '45%', 
+            'display': 'inline-block', 
+            'verticalAlign': 'top', 
+            'border': '1px solid red', 
+            'borderRadius': '10px',  
+            'boxShadow': '0 0 5px red, 0 0 10px red, 0 0 15px red',  
+            'marginBottom': '20px'
+        }),
+    ], className="row", style={'display': 'flex', 'justifyContent': 'space-around', 'marginBottom': '20px'}),
+    
+    html.Div([
+        html.Div([
+            dcc.Graph(id='end-level-graph'),
+            html.P(id='end-level-analysis', style={'color': 'white', 'fontSize': '14px', 'textAlign': 'center', 'fontWeight': 'bold', 'paddingBottom': '10px'}),
+            create_audio_component('end-level')
+        ], style={
+            'padding': '10px', 
+            'width': '45%', 
+            'display': 'inline-block', 
+            'verticalAlign': 'top', 
+            'border': '1px solid red', 
+            'borderRadius': '10px',  
+            'boxShadow': '0 0 5px red, 0 0 10px red, 0 0 15px red'  
+        }),
+        
+        html.Div([
+            dcc.Graph(id='merchandise-sales-graph'),
+            html.P(id='merchandise-sales-analysis', style={'color': 'white', 'fontSize': '14px', 'textAlign': 'center', 'fontWeight': 'bold', 'paddingBottom': '10px'}),
+            create_audio_component('merchandise-sales')
+        ], style={
+            'padding': '10px', 
+            'width': '45%', 
+            'display': 'inline-block', 
+            'verticalAlign': 'top', 
+            'border': '1px solid red', 
+            'borderRadius': '10px',  
+            'boxShadow': '0 0 5px red, 0 0 10px red, 0 0 15px red'  
+        }),
+    ], className="row", style={'display': 'flex', 'justifyContent': 'space-around'}),
+    html.Div([
+        create_data_card("Total Players", "1000"),
+        create_data_card("Total Battles", "5000")
+    ], className="row", style={'display': 'flex', 'justifyContent': 'space-around'}),
+], style={'backgroundColor': '#222', 'padding': '20px'})
+
+additional_stats_layout = html.Div([
+    html.Div([
+        html.Div([
+            dcc.Graph(id='evolution-level-graph'),
+            html.P(id='evolution-level-analysis', style={'color': 'white', 'fontSize': '14px', 'textAlign': 'center', 'fontWeight': 'bold', 'paddingBottom': '10px'}),
+            create_audio_component('evolution-level')
+        ], style={
+            'padding': '10px', 
+            'width': '45%', 
+            'display': 'inline-block', 
+            'verticalAlign': 'top', 
+            'border': '1px solid red', 
+            'borderRadius': '10px',  
+            'boxShadow': '0 0 5px red, 0 0 10px red, 0 0 15px red'  
+        }),
+        
+        html.Div([
+            dcc.Graph(id='battle-duration-graph'),
+            html.P(id='battle-duration-analysis', style={'color': 'white', 'fontSize': '14px', 'textAlign': 'center', 'fontWeight': 'bold', 'paddingBottom': '10px'}),
+            create_audio_component('battle-duration')
+        ], style={
+            'padding': '10px', 
+            'width': '45%', 
+            'display': 'inline-block', 
+            'verticalAlign': 'top', 
+            'border': '1px solid red', 
+            'borderRadius': '10px',  
+            'boxShadow': '0 0 5px red, 0 0 10px red, 0 0 15px red'  
+        }),
+    ], className="row", style={'display': 'flex', 'justifyContent': 'space-around', 'marginBottom': '20px'}),
+    html.Div([
+        html.Div([
+            dcc.Graph(id='elite-four-time-graph'),
+            html.P(id='elite-four-time-analysis', style={'color': 'white', 'fontSize': '14px', 'textAlign': 'center', 'fontWeight': 'bold', 'paddingBottom': '10px'}),
+            create_audio_component('elite-four-time')
+        ], style={
+            'padding': '10px', 
+            'width': '45%', 
+            'display': 'inline-block', 
+            'verticalAlign': 'top', 
+            'border': '1px solid red', 
+            'borderRadius': '10px',  
+            'boxShadow': '0 0 5px red, 0 0 10px red, 0 0 15px red'  
+        }),
+        
+        html.Div([
+            dcc.Graph(id='move-count-graph'),
+            html.P(id='move-count-analysis', style={'color': 'white', 'fontSize': '14px', 'textAlign': 'center', 'fontWeight': 'bold', 'paddingBottom': '10px'}),
+            create_audio_component('move-count')
+        ], style={
+            'padding': '10px', 
+            'width': '45%', 
+            'display': 'inline-block', 
+            'verticalAlign': 'top', 
+            'border': '1px solid red', 
+            'borderRadius': '10px',  
+            'boxShadow': '0 0 5px red, 0 0 10px red, 0 0 15px red'  
+        }),
+    ], className="row", style={'display': 'flex', 'justifyContent': 'space-around'}),
+], style={'backgroundColor': '#222', 'padding': '20px'})
+
+app.layout = html.Div([
+    main_layout,
+    create_modal('win-rate'),
+    create_modal('player-choice'),
+    create_modal('end-level'),
+    create_modal('merchandise-sales'),
+    create_modal('evolution-level'),
+    create_modal('battle-duration'),
+    create_modal('elite-four-time'),
+    create_modal('move-count')
+])
+
+@app.callback(
+    Output('page-content', 'children'),
+    [Input('page-dropdown', 'value')]
+)
+def display_page(page):
+    if page == 'additional':
+        return additional_stats_layout
+    else:
+        return main_stats_layout
+
+# Callbacks for interactivity
+@app.callback(
+    Output('win-rate-graph', 'figure'),
+    Output('win-rate-analysis', 'children'),
+    Input('win-rate-graph', 'clickData'),
+    State('win-rate-graph', 'figure')
+)
+def update_win_rate_graph(clickData, figure):
+    fig = create_bar_graph(df['Starter'], df['Win_Rate'], 'Win Rate Distribution')
+    analysis = 'Bulbasaur, Charmander, and Squirtle all have competitive win rates, with Charmander having a slight edge.'
+    return fig, analysis
+
+@app.callback(
+    Output('player-choice-graph', 'figure'),
+    Output('player-choice-analysis', 'children'),
+    Input('player-choice-graph', 'clickData'),
+    State('player-choice-graph', 'figure')
+)
+def update_player_choice_graph(clickData, figure):
+    fig = create_pie_chart(df['Starter'], df['Player_Choice_Percentage'], 'Player Choice Percentage')
+    analysis = 'Charmander is the most popular starter, chosen by 50% of players. Squirtle and Bulbasaur are chosen by 30% and 20% of players, respectively.'
+    return fig, analysis
+
+@app.callback(
+    Output('end-level-graph', 'figure'),
+    Output('end-level-analysis', 'children'),
+    Input('end-level-graph', 'clickData'),
+    State('end-level-graph', 'figure')
+)
+def update_end_level_graph(clickData, figure):
+    fig = create_line_graph(df['Starter'], df['Average_End_Level'], 'Average End Level')
+    analysis = 'On average, Charmander reaches the highest end level at 60, followed by Squirtle at 58 and Bulbasaur at 55.'
+    return fig, analysis
+
+@app.callback(
+    Output('merchandise-sales-graph', 'figure'),
+    Output('merchandise-sales-analysis', 'children'),
+    Input('merchandise-sales-graph', 'clickData'),
+    State('merchandise-sales-graph', 'figure')
+)
+def update_merchandise_sales_graph(clickData, figure):
+    fig = create_scatter_graph(df['Starter'], df['Merchandise_Sales'], 'Merchandise Sales')
+    analysis = 'Charmander leads in merchandise sales with 15,000 units sold. Squirtle follows with 13,000 units, and Bulbasaur has 10,000 units sold.'
+    return fig, analysis
+
+@app.callback(
+    Output('evolution-level-graph', 'figure'),
+    Output('evolution-level-analysis', 'children'),
+    Input('evolution-level-graph', 'clickData'),
+    State('evolution-level-graph', 'figure')
+)
+def update_evolution_level_graph(clickData, figure):
+    labels = df['Starter'].tolist() + ['Evolution Level']
+    parents = [''] * len(df['Starter']) + df['Starter'].tolist()
+    values = [1] * len(df['Starter']) + df['Evolution_Level'].tolist()
+    
+    fig = create_sunburst_chart(labels, parents, values, 'Evolution Levels')
+    analysis = 'All starters evolve at level 16.'
+    return fig, analysis
+
+@app.callback(
+    Output('battle-duration-graph', 'figure'),
+    Output('battle-duration-analysis', 'children'),
+    Input('battle-duration-graph', 'clickData'),
+    State('battle-duration-graph', 'figure')
+)
+def update_battle_duration_graph(clickData, figure):
+    fig = create_bar_graph(df['Starter'], df['Average_Battle_Duration'], 'Average Battle Duration')
+    analysis = 'Average battle duration: Bulbasaur (5 min), Charmander (6 min), Squirtle (5.5 min).'
+    return fig, analysis
+
+@app.callback(
+    Output('elite-four-time-graph', 'figure'),
+    Output('elite-four-time-analysis', 'children'),
+    Input('elite-four-time-graph', 'clickData'),
+    State('elite-four-time-graph', 'figure')
+)
+def update_elite_four_time_graph(clickData, figure):
+    fig = create_scatter_graph(df['Starter'], df['Average_Time_To_Beat_Elite_Four'], 'Average Time To Beat Elite Four')
+    analysis = 'Average time to beat the Elite Four: Bulbasaur (30 min), Charmander (25 min), Squirtle (28 min).'
+    return fig, analysis
+
+@app.callback(
+    Output('move-count-graph', 'figure'),
+    Output('move-count-analysis', 'children'),
+    Input('move-count-graph', 'clickData'),
+    State('move-count-graph', 'figure')
+)
+def update_move_count_graph(clickData, figure):
+    fig = create_bubble_chart(df['Starter'], df['Most_Used_Move_Count'], df['Most_Used_Move_Count'], 'Most Used Move Count')
+    analysis = 'Most used move count: Bulbasaur (100), Charmander (150), Squirtle (120).'
+    return fig, analysis
+
+@app.callback(
+    Output({'type': 'audio-control', 'index': MATCH}, 'src'),
+    Input({'type': 'audio-control', 'index': MATCH}, 'id')
+)
+def update_audio_src(id):
+    analysis_texts = {
+        'win-rate': 'Bulbasaur, Charmander, and Squirtle all have competitive win rates, with Charmander having a slight edge.',
+        'player-choice': 'Charmander is the most popular starter, chosen by 50% of players. Squirtle and Bulbasaur are chosen by 30% and 20% of players, respectively.',
+        'end-level': 'On average, Charmander reaches the highest end level at 60, followed by Squirtle at 58 and Bulbasaur at 55.',
+        'merchandise-sales': 'Charmander leads in merchandise sales with 15,000 units sold. Squirtle follows with 13,000 units, and Bulbasaur has 10,000 units sold.',
+        'evolution-level': 'All starters evolve at level 16.',
+        'battle-duration': 'Average battle duration: Bulbasaur (5 min), Charmander (6 min), Squirtle (5.5 min).',
+        'elite-four-time': 'Average time to beat the Elite Four: Bulbasaur (30 min), Charmander (25 min), Squirtle (28 min).',
+        'move-count': 'Most used move count: Bulbasaur (100), Charmander (150), Squirtle (120).'
+    }
+    
+    index = id['index']
+    analysis_text = analysis_texts.get(index, 'Analysis not available.')
+    return f"data:audio/wav;base64,{generate_audio(analysis_text)}"
+
+def generate_audio(text):
+    tts = gTTS(text)
+    buf = BytesIO()
+    tts.write_to_fp(buf)
+    buf.seek(0)
+    audio_base64 = base64.b64encode(buf.read()).decode('utf-8')
+    return audio_base64
+
+def register_modal_callbacks(graph_id, update_graph_function):
+    @app.callback(
+        Output(f'{graph_id}-modal', 'is_open'),
+        Output(f'{graph_id}-modal-graph', 'figure'),
+        Input(graph_id, 'clickData'),
+        Input(f'{graph_id}-close', 'n_clicks'),
+        State(f'{graph_id}-modal', 'is_open'),
+    )
+    def toggle_modal(clickData, n_clicks, is_open):
+        if clickData or n_clicks:
+            return not is_open, update_graph_function(clickData, None)[0]
+        return is_open, dash.no_update
+
+register_modal_callbacks('win-rate-graph', update_win_rate_graph)
+register_modal_callbacks('player-choice-graph', update_player_choice_graph)
+register_modal_callbacks('end-level-graph', update_end_level_graph)
+register_modal_callbacks('merchandise-sales-graph', update_merchandise_sales_graph)
+register_modal_callbacks('evolution-level-graph', update_evolution_level_graph)
+register_modal_callbacks('battle-duration-graph', update_battle_duration_graph)
+register_modal_callbacks('elite-four-time-graph', update_elite_four_time_graph)
+register_modal_callbacks('move-count-graph', update_move_count_graph)
+
+if __name__ == '__main__':
+    app.run_server(debug=True, use_reloader=False)
